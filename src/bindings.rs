@@ -18,16 +18,17 @@ use tempfile::NamedTempFile;
 /// A wrapper for the SKE kernel functionality
 ///
 /// Quite sparse ATM.
-pub struct SkeServer {
-    lib: Container<SkeLib>,
+pub struct SkeServer<'a> {
+    lib: Container<SkeLib<'a>>,
     _named_file: Option<NamedTempFile>,
 }
 
-impl SkeServer {
+impl<'a> SkeServer<'a> {
     /// Create a new instance of `SkeServer` from vendored library
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let mut file = NamedTempFile::new()?;
-        file.write(SKELIB)?;
+        let written_bytes = file.write(SKELIB)?;
+        assert_eq!(written_bytes, SKELIB.len());
         let mut new_instance = Self::from_file(file.path())?;
         new_instance._named_file = Some(file);
         Ok(new_instance)
@@ -42,11 +43,11 @@ impl SkeServer {
         })
     }
 
-    // Wrapped implementation details
+    // Wrapped SKE functionality
 
     /// Run the kernel
-    pub fn run(&self) {
-        unsafe { self.lib.KRun() }
+    pub fn run(&self, duration_us: i64) {
+        unsafe { self.lib.KRun(duration_us) }
     }
 
     /// Load a SKE configuration
@@ -63,15 +64,121 @@ impl SkeServer {
         // creates a NULL terminated C String
         let config_file_path = CString::new(AsRef::<OsStr>::as_ref(conf_file).as_bytes())?;
         unsafe { self.lib.KLoadCfg(config_file_path.as_ptr()) };
+        self.set_output();
         Ok(())
+    }
+
+    /// Get the number of partitions
+    pub fn num_partitions(&self) -> usize {
+        unsafe { self.lib.CfgGetNoPartitions() as usize }
+    }
+
+    /// Set the console callback for all partitions
+    fn set_output(&self) {
+        for i in 0..self.num_partitions() {
+            unsafe {
+                let p = self.lib.KPartitionGetByIdx(i as i32);
+                self.lib
+                    .KPartitionSetConsole(p, simple_console_cb as *const _);
+            }
+        }
     }
 }
 
-#[derive(WrapperApi)]
-struct SkeLib {
-    KRun: unsafe extern "C" fn(),
-    KLoadCfg: unsafe extern "C" fn(cfg: *const i8),
+/// This function is our console callback. It's called by SKE everytime a partition want's to print
+extern "C" fn simple_console_cb(_partition: *const Partition, ptr: *const i8, len: u32) {
+    let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
+    let message = std::str::from_utf8(slice)
+        .expect("unable to parse output from partition as utf8")
+        .trim_end_matches('\n');
+
+    /* TODO make this more beautiful
+    let part_cfg = unsafe {
+        *self.lib.KPartitionGetCfg(partition);
+    }
+
+    let prefix = format!("[{}] ", "bogus");
+    let mut filler = String::from("\n");
+    filler.push_str(&" ".repeat(prefix.len()));
+    println!("{}{}", prefix, message.replace('\n', &filler));
+    */
+    println!("{}", message);
 }
+
+#[derive(WrapperApi)]
+struct SkeLib<'a> {
+    // functions
+    KLoadCfg: unsafe extern "C" fn(cfg: *const i8) -> bool,
+    KRun: unsafe extern "C" fn(duration: i64),
+
+    CfgGetNoPartitions: unsafe extern "C" fn() -> i32,
+    CfgGetPartitionByIdx: unsafe extern "C" fn(index: i32) -> *const PartitionConfig,
+
+    fgGetScheduleByIdx: unsafe extern "C" fn(index: i32) -> *const ScheduleConfig,
+
+    KPartitionGetCfg: unsafe extern "C" fn(partition: *const Partition) -> *const PartitionConfig,
+
+    KPartitionGetByIdx: unsafe extern "C" fn(index: i32) -> *const Partition,
+    KPartitionSetConsole: unsafe extern "C" fn(
+        partition: *const Partition,
+        console_callback: *const ConsoleCallback,
+    ) -> *const Partition,
+
+    // variables
+    skeMaxStringLength: &'a i32,
+    skeMaxNoSchedPWnds: &'a i32,
+    skeMaxNoPorts: &'a i32,
+    skeKTraceEventSize: &'a i32,
+    kClockScaleFactor: &'a i32,
+}
+
+// Types defined in C
+type ConsoleCallback = extern "C" fn(*const Partition, *const i8, u32);
+
+/*
+#[repr(C)]
+struct PartitionSchedule {
+    period: i64,
+    duration: i64,
+}
+*/
+
+#[repr(C)]
+struct ScheduleConfig {
+    period: i64,
+    duration: i64,
+}
+
+#[repr(C)]
+struct Port {
+    name: [i8; MAX_STRING_LENGTH],
+    channelIdx: i32,
+    r#type: i32,
+    direction: i32,
+}
+
+#[repr(C)]
+struct PartitionConfig {
+    name: [u8; MAX_STRING_LENGTH],
+    flags: i32,
+    schedule: Schedule,
+    ports: [Port; MAX_NO_PORTS],
+    potrs_len: i32,
+}
+
+#[repr(C)]
+struct Schedule {
+    period: i64,
+    duration: i64,
+}
+
+#[repr(C)]
+struct Partition {
+    _private: [u8; 0],
+}
+
+const MAX_STRING_LENGTH: usize = 32; // TODO check this value
+const MAX_NO_PORTS: usize = 32; // TODO check this value
 
 /// This constant stores vendored `libskeserver.so` so that ske-rs can work standalone
 const SKELIB: &[u8] = include_bytes!("../libskeserver.so");
