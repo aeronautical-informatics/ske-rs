@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 use std::ffi::CString;
 use std::ffi::OsStr;
@@ -12,18 +13,18 @@ use std::os::unix::ffi::OsStrExt;
 use dlopen::wrapper::{Container, WrapperApi};
 // import the derive macro
 use dlopen_derive::WrapperApi;
-
+use lazy_static::lazy_static;
 use tempfile::NamedTempFile;
 
 /// A wrapper for the SKE kernel functionality
 ///
 /// Quite sparse ATM.
-pub struct SkeServer<'a> {
-    lib: Container<SkeLib<'a>>,
+pub struct SkeServer {
+    lib: Arc<Container<SkeLib<'static>>>,
     _named_file: Option<NamedTempFile>,
 }
 
-impl<'a> SkeServer<'a> {
+impl SkeServer {
     /// Create a new instance of `SkeServer` from vendored library
     pub fn new() -> Result<Self, Box<dyn Error>> {
         let mut file = NamedTempFile::new()?;
@@ -36,7 +37,7 @@ impl<'a> SkeServer<'a> {
 
     /// Create a new instance of `SkeServer` from custom library
     pub fn from_file(libfile: &Path) -> Result<Self, Box<dyn Error>> {
-        let lib = unsafe { Container::load(libfile) }?;
+        let lib = Arc::new(unsafe { Container::load(libfile) }?);
         Ok(Self {
             lib,
             _named_file: None,
@@ -75,6 +76,9 @@ impl<'a> SkeServer<'a> {
 
     /// Set the console callback for all partitions
     fn set_output(&self) {
+        let mut lib = LIB_HANDLE.write().unwrap();
+        *lib = Some(self.lib.clone());
+
         for i in 0..self.num_partitions() {
             unsafe {
                 let p = self.lib.KPartitionGetByIdx(i as i32);
@@ -85,24 +89,33 @@ impl<'a> SkeServer<'a> {
     }
 }
 
+lazy_static! {
+    static ref LIB_HANDLE: RwLock<Option<Arc<Container<SkeLib<'static>>>>> = RwLock::new(None);
+}
+
 /// This function is our console callback. It's called by SKE everytime a partition want's to print
-extern "C" fn simple_console_cb(_partition: *const Partition, ptr: *const i8, len: u32) {
+extern "C" fn simple_console_cb(partition: *const Partition, ptr: *const i8, len: u32) {
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
     let message = std::str::from_utf8(slice)
         .expect("unable to parse output from partition as utf8")
         .trim_end_matches('\n');
 
-    /* TODO make this more beautiful
-    let part_cfg = unsafe {
-        *self.lib.KPartitionGetCfg(partition);
-    }
+    let lib_guard = LIB_HANDLE.read();
+    let maybe_lib = lib_guard.expect("the lock is poisoned");
+    let lib = maybe_lib.as_ref().expect("LIB_HANDLE not propagated");
 
-    let prefix = format!("[{}] ", "bogus");
+    let p_cfg = unsafe { lib.KPartitionGetCfg(partition) };
+    let p_name = std::str::from_utf8(unsafe {
+        std::slice::from_raw_parts((*p_cfg).name.as_ptr(), MAX_STRING_LENGTH)
+    })
+    .expect("unable to parse partition name as utf8")
+    .trim_end_matches('\0');
+
+    let prefix = format!("{}: ", p_name);
+
     let mut filler = String::from("\n");
     filler.push_str(&" ".repeat(prefix.len()));
     println!("{}{}", prefix, message.replace('\n', &filler));
-    */
-    println!("{}", message);
 }
 
 #[derive(WrapperApi)]
@@ -114,7 +127,7 @@ struct SkeLib<'a> {
     CfgGetNoPartitions: unsafe extern "C" fn() -> i32,
     CfgGetPartitionByIdx: unsafe extern "C" fn(index: i32) -> *const PartitionConfig,
 
-    fgGetScheduleByIdx: unsafe extern "C" fn(index: i32) -> *const ScheduleConfig,
+    CfgGetScheduleByIdx: unsafe extern "C" fn(index: i32) -> *const ScheduleConfig,
 
     KPartitionGetCfg: unsafe extern "C" fn(partition: *const Partition) -> *const PartitionConfig,
 
