@@ -194,4 +194,4 @@ const MAX_STRING_LENGTH: usize = 32; // TODO check this value
 const MAX_NO_PORTS: usize = 32; // TODO check this value
 
 /// This constant stores vendored `libskeserver.so` so that ske-rs can work standalone
-const SKELIB: &[u8] = include_bytes!("../libskeserver.so");
+const SKELIB: &[u8] = include_bytes!(concat!(env!("SKE_PATH"), "/bin/libskeserver.so"));

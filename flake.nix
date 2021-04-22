@@ -9,29 +9,29 @@
     utils.lib.eachSystem [ "x86_64-linux" ] (system: let
       pkgs = nixpkgs.legacyPackages."${system}";
       naersk-lib = naersk.lib."${system}";
-      _ske = ske.defaultPackage."${system}";
+      ske-lib = ske.defaultPackage."${system}";
     in rec {
       # `nix build`
-      packages.my-project = naersk-lib.buildPackage {
+      packages.ske-rs = naersk-lib.buildPackage {
         pname = "ske-rs";
-        root = ./.;
+        src = ./.;
         doCheck = true;
         doDoc = true;
-        overrideMain = _: { postPatch = "cp ${_ske}/bin/libskeserver.so ."; };
+        overrideMain = _: { SKE_PATH = "${ske-lib}"; };
       };
-      defaultPackage = packages.my-project;
+      defaultPackage = packages.ske-rs;
 
       # `nix run`
-      apps.my-project = utils.lib.mkApp {
-        drv = packages.my-project;
+      apps.ske-rs = utils.lib.mkApp {
+        drv = packages.ske-rs;
       };
-      defaultApp = apps.my-project;
+      defaultApp = apps.ske-rs;
 
       # `nix develop`
       devShell = pkgs.mkShell {
         nativeBuildInputs = with pkgs; [ rustc cargo ];
       };
 
-      hydraJobs = packages.my-project;
+      hydraJobs = packages.ske-rs;
     });
 }
