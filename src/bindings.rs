@@ -96,7 +96,7 @@ lazy_static! {
 /// This function is our console callback. It's called by SKE everytime a partition want's to print
 extern "C" fn simple_console_cb(partition: *const Partition, ptr: *const i8, len: u32) {
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
-     let _ =io::stdout().write_all(slice);
+    let _ = io::stdout().write_all(slice);
 }
 
 #[derive(WrapperApi)]
