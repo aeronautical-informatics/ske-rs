@@ -1,4 +1,5 @@
 {
+  description = "SKE wrapper written in Rust";
   inputs = {
     utils.url = "github:numtide/flake-utils";
     naersk.url = "github:nmattia/naersk";
@@ -14,11 +15,12 @@
       # `nix build`
       packages.ske-rs = naersk-lib.buildPackage {
         pname = "ske-rs";
-        src = ./.;
+        src = ./.; #builtins.filterSource (p: t: builtins.match ".*" p != null) ./.;
         doCheck = true;
         doDoc = true;
         overrideMain = _: { SKE_PATH = "${ske-lib}"; };
       };
+      packages.ske-rs-doc = packages.ske-rs.doc;
       defaultPackage = packages.ske-rs;
 
       # `nix run`

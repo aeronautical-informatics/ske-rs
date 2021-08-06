@@ -96,26 +96,7 @@ lazy_static! {
 /// This function is our console callback. It's called by SKE everytime a partition want's to print
 extern "C" fn simple_console_cb(partition: *const Partition, ptr: *const i8, len: u32) {
     let slice = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
-    let message = std::str::from_utf8(slice)
-        .expect("unable to parse output from partition as utf8")
-        .trim_end_matches('\n');
-
-    let lib_guard = LIB_HANDLE.read();
-    let maybe_lib = lib_guard.expect("the lock is poisoned");
-    let lib = maybe_lib.as_ref().expect("LIB_HANDLE not propagated");
-
-    let p_cfg = unsafe { lib.KPartitionGetCfg(partition) };
-    let p_name = std::str::from_utf8(unsafe {
-        std::slice::from_raw_parts((*p_cfg).name.as_ptr(), MAX_STRING_LENGTH)
-    })
-    .expect("unable to parse partition name as utf8")
-    .trim_end_matches('\0');
-
-    let prefix = format!("{}: ", p_name);
-
-    let mut filler = String::from("\n");
-    filler.push_str(&" ".repeat(prefix.len()));
-    println!("{}{}", prefix, message.replace('\n', &filler));
+     let _ =io::stdout().write_all(slice);
 }
 
 #[derive(WrapperApi)]
